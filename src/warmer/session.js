@@ -1,184 +1,155 @@
 const path = require('path');
+const fs = require('fs');
 const EventEmitter = require('events');
-const { Boom } = require('@hapi/boom');
-const {
-  default: makeWASocket,
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion,
-  jidNormalizedUser,
-  DisconnectReason,
-} = require('@whiskeysockets/baileys');
-const { baileysLogger } = require('../logger');
+const { Client, LocalAuth } = require('whatsapp-web.js');
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Tradução dos códigos de desconexão do WhatsApp para algo legível.
-const REASONS = {
-  [DisconnectReason.loggedOut]: 'deslogado — credenciais inválidas (precisa reparear)',
-  [DisconnectReason.restartRequired]: 'reinício necessário (normal após parear)',
-  [DisconnectReason.connectionClosed]: 'conexão fechada pelo servidor',
-  [DisconnectReason.connectionLost]: 'conexão perdida (rede)',
-  [DisconnectReason.connectionReplaced]: 'conexão substituída — o mesmo número abriu outra sessão',
-  [DisconnectReason.timedOut]: 'tempo esgotado',
-  [DisconnectReason.badSession]: 'sessão corrompida (precisa reparear)',
-  [DisconnectReason.multideviceMismatch]: 'incompatibilidade multi-dispositivo (precisa reparear)',
-  [DisconnectReason.forbidden]: 'proibido — possível bloqueio/ban do número',
-  [DisconnectReason.unavailableService]: 'serviço do WhatsApp indisponível',
-};
-
-// Códigos em que NÃO adianta reconectar sozinho (exigem ação do usuário).
-const FATAL = new Set([
-  DisconnectReason.loggedOut,
-  DisconnectReason.badSession,
-  DisconnectReason.multideviceMismatch,
-  DisconnectReason.forbidden,
-  DisconnectReason.connectionReplaced,
-]);
-
-const MAX_RECONNECT_ATTEMPTS = 8;
+// ACK do whatsapp-web.js -> nosso status de entrega
+// -1 erro | 0 pendente | 1 servidor | 2 entregue | 3 lido | 4 ouvido
+function ackToStatus(ack) {
+  if (ack >= 3) return 'read';
+  if (ack === 2) return 'delivered';
+  if (ack === 1) return 'sent';
+  if (ack === -1) return 'error';
+  return null; // 0 = pendente, ainda não confirmou
+}
 
 /**
- * Uma conexão de WhatsApp (Baileys). Emite:
- *   'qr'         (qrString)
- *   'status'     (status)
- *   'ready'      ()
- *   'message'    ({ from, text })
- *   'sent'       ({ to, text })
- *   'disconnect' ({ code, reason, willReconnect, attempt, fatal })
- *   'log'        ({ level, text })
+ * Um número de WhatsApp conectado via WhatsApp Web REAL (whatsapp-web.js +
+ * Chromium headless). Cada sessão é uma aba do web.whatsapp.com, online 24/7.
+ *
+ * Mantém a MESMA interface da versão Baileys:
+ *   'qr'(qr) 'status'(status) 'ready'() 'message'({from,text})
+ *   'sent'({to,text,msgId}) 'receipt'({msgId,to,status})
+ *   'disconnect'({code,reason,...}) 'log'({level,text})
  */
 class Session extends EventEmitter {
   constructor(id, authRoot, typingCfg) {
     super();
     this.id = id;
-    this.authDir = path.join(authRoot, id);
+    this.authRoot = authRoot;
     this.typingCfg = typingCfg;
     this.status = 'disconnected';
     this.qr = null;
     this.number = null;
-    this.sock = null;
-    this.lastDisconnect = null; // { code, reason, at }
+    this.client = null;
+    this.lastDisconnect = null;
     this._stopping = false;
-    this._attempts = 0;
-    this._reconnectTimer = null;
-    this._pending = new Map(); // msgId -> { toNumber, timer }
+    this._pending = new Map(); // msgId -> { toNumber, timer, gotServerAck }
+    this._presenceTimer = null;
+  }
+
+  _authDir() {
+    // LocalAuth grava em <authRoot>/session-<id>
+    return path.join(this.authRoot, `session-${this.id}`);
   }
 
   async start() {
     this._stopping = false;
-    if (this._reconnectTimer) {
-      clearTimeout(this._reconnectTimer);
-      this._reconnectTimer = null;
-    }
-    // encerra socket anterior e seus listeners para não acumular
-    if (this.sock) {
-      try {
-        this.sock.ev.removeAllListeners();
-        this.sock.end(undefined);
-      } catch (_) {
-        /* noop */
-      }
-      this.sock = null;
-    }
-
     this.status = 'connecting';
     this.emit('status', this.status);
 
-    const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
-    const { version } = await fetchLatestBaileysVersion();
-
-    const sock = makeWASocket({
-      version,
-      auth: state,
-      logger: baileysLogger,
-      printQRInTerminal: false,
-      browser: ['Aquecedor', 'Chrome', '1.0.0'],
-      markOnlineOnConnect: false,
-      syncFullHistory: false,
-      // --- robustez de conexão (reduz os timeouts 408 em ambiente de datacenter) ---
-      connectTimeoutMs: 60_000,
-      keepAliveIntervalMs: 30_000, // ping periódico para manter a sessão viva
-      defaultQueryTimeoutMs: undefined, // não derruba por timeout nas init queries
-      retryRequestDelayMs: 500,
-      emitOwnEvents: false,
+    const client = new Client({
+      authStrategy: new LocalAuth({ clientId: this.id, dataPath: this.authRoot }),
+      puppeteer: {
+        headless: true,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--no-first-run',
+          '--disable-extensions',
+        ],
+      },
     });
-    this.sock = sock;
+    this.client = client;
 
-    sock.ev.on('creds.update', saveCreds);
-    sock.ev.on('connection.update', (u) => this._onConnectionUpdate(u));
-    sock.ev.on('messages.upsert', (m) => this._onMessages(m));
-    sock.ev.on('messages.update', (u) => this._onMessagesUpdate(u));
-  }
+    client.on('qr', (qr) => {
+      this.qr = qr;
+      this.status = 'qr';
+      this.emit('qr', qr);
+      this.emit('status', this.status);
+    });
 
-  // Rastreia o status de entrega de uma mensagem enviada por este número.
-  // Se nenhum "entregue" chegar em 45s, marca como não entregue (bloqueio).
-  _trackSend(msgId, toNumber) {
-    const timer = setTimeout(() => {
-      if (this._pending.has(msgId)) {
-        this._pending.delete(msgId);
-        this.emit('receipt', { msgId, to: toNumber, status: 'undelivered' });
-      }
-    }, 45000);
-    this._pending.set(msgId, { toNumber, timer });
-  }
+    client.on('authenticated', () => {
+      this.qr = null;
+    });
 
-  _onMessagesUpdate(updates) {
-    for (const u of updates) {
-      const msgId = u.key?.id;
-      if (!msgId || !this._pending.has(msgId)) continue;
-      const code = u.update?.status;
-      if (code == null) continue;
-      // WAMessageStatus: 0=erro 1=pendente 2=servidor 3=entregue 4=lido 5=ouvido
-      let status = null;
-      if (code >= 4) status = 'read';
-      else if (code === 3) status = 'delivered';
-      else if (code === 2) status = 'sent';
-      else if (code === 0) status = 'error';
-      if (!status) continue;
+    client.on('auth_failure', (msg) => {
+      this.lastDisconnect = { code: 401, reason: 'falha de autenticação (reparear)', at: Date.now() };
+      this.status = 'logged_out';
+      this.emit('status', this.status);
+      this.emit('log', { level: 'error', text: `[${this.id}] falha de autenticação: ${msg}` });
+    });
 
+    client.on('ready', () => {
+      this.qr = null;
+      this.status = 'connected';
+      this.number = client.info?.wid?.user || null;
+      this.emit('status', this.status);
+      this.emit('ready');
+      this.emit('log', { level: 'info', text: `[${this.id}] conectado (+${this.number})` });
+      this._startPresence();
+    });
+
+    client.on('message', (msg) => {
+      // só conversa individual, mensagens recebidas
+      if (msg.fromMe) return;
+      const from = (msg.from || '');
+      if (!from.endsWith('@c.us')) return;
+      const text = msg.body || '';
+      if (!text) return;
+      this.emit('message', { from: from.replace('@c.us', ''), text });
+    });
+
+    client.on('message_ack', (msg, ack) => {
+      const msgId = msg.id?._serialized;
+      if (!msgId || !this._pending.has(msgId)) return;
+      const status = ackToStatus(ack);
+      if (!status) return;
       const pending = this._pending.get(msgId);
-      // status terminais: para de rastrear e limpa o timeout
+      if (status === 'sent') pending.gotServerAck = true;
       if (status === 'delivered' || status === 'read' || status === 'error') {
         clearTimeout(pending.timer);
         this._pending.delete(msgId);
       }
       this.emit('receipt', { msgId, to: pending.toNumber, status });
+    });
+
+    client.on('disconnected', (reason) => this._handleDisconnected(reason));
+
+    try {
+      await client.initialize();
+    } catch (e) {
+      this.emit('log', { level: 'error', text: `[${this.id}] erro ao iniciar navegador: ${e.message}` });
+      this._handleDisconnected('INIT_ERROR');
     }
   }
 
-  _onConnectionUpdate(update) {
-    const { connection, lastDisconnect, qr } = update;
-
-    if (qr) {
-      this.qr = qr;
-      this.status = 'qr';
-      this.emit('qr', qr);
-      this.emit('status', this.status);
-    }
-
-    if (connection === 'open') {
-      this.qr = null;
-      this.status = 'connected';
-      this._attempts = 0;
-      this.number = jidNormalizedUser(this.sock.user.id).split('@')[0];
-      this.emit('status', this.status);
-      this.emit('ready');
-      this.emit('log', { level: 'info', text: `[${this.id}] conectado (+${this.number})` });
-    }
-
-    if (connection === 'close') {
-      this._handleClose(lastDisconnect);
-    }
+  // mantém o aparelho ativamente online (aba aberta)
+  _startPresence() {
+    if (this._presenceTimer) clearInterval(this._presenceTimer);
+    const ping = () => {
+      try {
+        this.client && this.client.sendPresenceAvailable();
+      } catch (_) {
+        /* noop */
+      }
+    };
+    ping();
+    this._presenceTimer = setInterval(ping, 60000);
   }
 
-  _handleClose(lastDisconnect) {
-    const err = lastDisconnect?.error;
-    const code =
-      err instanceof Boom ? err.output?.statusCode : err?.output?.statusCode;
-    const reason = REASONS[code] || err?.message || 'motivo desconhecido';
-    const fatal = code != null && FATAL.has(code);
-
-    this.lastDisconnect = { code: code ?? null, reason, at: Date.now() };
+  _handleDisconnected(reason) {
+    if (this._presenceTimer) {
+      clearInterval(this._presenceTimer);
+      this._presenceTimer = null;
+    }
+    const loggedOut = reason === 'LOGOUT' || reason === 'UNPAIRED' || reason === 'UNPAIRED_DEVICE';
+    this.lastDisconnect = { code: loggedOut ? 401 : null, reason: String(reason), at: Date.now() };
 
     if (this._stopping) {
       this.status = 'disconnected';
@@ -186,81 +157,86 @@ class Session extends EventEmitter {
       return;
     }
 
-    const willReconnect = !fatal && this._attempts < MAX_RECONNECT_ATTEMPTS;
+    if (loggedOut) {
+      this.status = 'logged_out';
+      this.emit('status', this.status);
+      this.emit('disconnect', { code: 401, reason: String(reason), willReconnect: false, fatal: true });
+      this.emit('log', { level: 'error', text: `[${this.id}] deslogado (${reason}) — precisa reparear` });
+      return;
+    }
 
-    if (code === DisconnectReason.loggedOut) this.status = 'logged_out';
-    else if (fatal) this.status = 'error';
-    else this.status = willReconnect ? 'reconnecting' : 'disconnected';
-
+    this.status = 'reconnecting';
     this.emit('status', this.status);
-    this.emit('disconnect', {
-      code: code ?? null,
-      reason,
-      willReconnect,
-      attempt: this._attempts,
-      fatal,
-    });
-    this.emit('log', {
-      level: fatal ? 'error' : 'warn',
-      text: `[${this.id}] caiu — código ${code ?? '?'}: ${reason}${
-        willReconnect ? ` · reconectando (tentativa ${this._attempts + 1})` : ''
-      }`,
-    });
-
-    if (willReconnect) {
-      this._attempts += 1;
-      // backoff exponencial: 1s, 2s, 4s… até 30s
-      const wait = Math.min(30000, 1000 * 2 ** (this._attempts - 1));
-      this._reconnectTimer = setTimeout(() => {
+    this.emit('disconnect', { code: null, reason: String(reason), willReconnect: true, fatal: false });
+    this.emit('log', { level: 'warn', text: `[${this.id}] caiu (${reason}) — reconectando` });
+    // recria o cliente após um instante
+    setTimeout(() => {
+      if (this._stopping) return;
+      this._destroyClient().finally(() =>
         this.start().catch((e) =>
           this.emit('log', { level: 'error', text: `[${this.id}] falha ao reconectar: ${e.message}` })
-        );
-      }, wait);
-    }
+        )
+      );
+    }, 4000);
   }
 
-  _onMessages({ messages, type }) {
-    if (type !== 'notify') return;
-    for (const msg of messages) {
-      if (!msg.message || msg.key.fromMe) continue;
-      const remoteJid = msg.key.remoteJid || '';
-      if (!remoteJid.endsWith('@s.whatsapp.net')) continue;
-      const from = remoteJid.split('@')[0];
-      const text =
-        msg.message.conversation || msg.message.extendedTextMessage?.text || '';
-      if (!text) continue;
-      this.emit('message', { from, text });
+  async _destroyClient() {
+    try {
+      if (this.client) await this.client.destroy();
+    } catch (_) {
+      /* noop */
     }
+    this.client = null;
+  }
+
+  _trackSend(msgId, toNumber) {
+    const timer = setTimeout(() => {
+      const p = this._pending.get(msgId);
+      if (p) {
+        this._pending.delete(msgId);
+        // chegou ao servidor mas não entregou = destinatário offline ('pending');
+        // nem chegou ao servidor = recusa real ('undelivered')
+        this.emit('receipt', {
+          msgId,
+          to: toNumber,
+          status: p.gotServerAck ? 'pending' : 'undelivered',
+        });
+      }
+    }, 45000);
+    this._pending.set(msgId, { toNumber, timer, gotServerAck: false });
   }
 
   async sendHuman(toNumber, text) {
-    if (this.status !== 'connected' || !this.sock) {
+    if (this.status !== 'connected' || !this.client) {
       throw new Error(`sessão ${this.id} não está conectada`);
     }
+    const chatId = `${toNumber}@c.us`;
     const cfg = this.typingCfg;
 
-    // valida o número e usa o JID canônico devolvido pelo WhatsApp
-    // (JID incorreto é causa comum de falha de entrega / ack 463)
-    let jid = `${toNumber}@s.whatsapp.net`;
+    // valida o número
     try {
-      const [info] = await this.sock.onWhatsApp(toNumber);
-      if (!info?.exists) {
-        throw new Error(`${toNumber} não tem WhatsApp`);
-      }
-      jid = info.jid;
+      const numId = await this.client.getNumberId(toNumber);
+      if (!numId) throw new Error(`${toNumber} não tem WhatsApp`);
     } catch (e) {
-      this.emit('log', { level: 'warn', text: `[${this.id}] onWhatsApp falhou para ${toNumber}: ${e.message}` });
+      this.emit('log', { level: 'warn', text: `[${this.id}] verificação de ${toNumber} falhou: ${e.message}` });
     }
 
-    await this.sock.sendPresenceUpdate('composing', jid);
-    const typingMs = Math.min(
-      cfg.maxMs,
-      cfg.baseMs + text.length * cfg.perCharMs + Math.random() * cfg.readDelayMs
-    );
-    await delay(typingMs);
-    await this.sock.sendPresenceUpdate('paused', jid);
-    const sent = await this.sock.sendMessage(jid, { text });
-    const msgId = sent?.key?.id || null;
+    // simula digitação
+    try {
+      const chat = await this.client.getChatById(chatId);
+      await chat.sendStateTyping();
+      const typingMs = Math.min(
+        cfg.maxMs,
+        cfg.baseMs + text.length * cfg.perCharMs + Math.random() * cfg.readDelayMs
+      );
+      await delay(typingMs);
+      await chat.clearState();
+    } catch (_) {
+      /* se falhar o "digitando", segue e envia mesmo assim */
+    }
+
+    const sent = await this.client.sendMessage(chatId, text);
+    const msgId = sent?.id?._serialized || null;
     if (msgId) this._trackSend(msgId, toNumber);
     this.emit('sent', { to: toNumber, text, msgId });
     return msgId;
@@ -268,23 +244,20 @@ class Session extends EventEmitter {
 
   async stop() {
     this._stopping = true;
-    if (this._reconnectTimer) {
-      clearTimeout(this._reconnectTimer);
-      this._reconnectTimer = null;
+    if (this._presenceTimer) {
+      clearInterval(this._presenceTimer);
+      this._presenceTimer = null;
     }
     for (const { timer } of this._pending.values()) clearTimeout(timer);
     this._pending.clear();
-    try {
-      if (this.sock) {
-        this.sock.ev.removeAllListeners();
-        this.sock.end(undefined);
-      }
-    } catch (_) {
-      /* noop */
-    }
-    this.sock = null;
+    await this._destroyClient();
     this.status = 'disconnected';
     this.emit('status', this.status);
+  }
+
+  // apaga as credenciais desta sessão (para remover/reparear do zero)
+  clearAuth() {
+    fs.rmSync(this._authDir(), { recursive: true, force: true });
   }
 
   toJSON() {

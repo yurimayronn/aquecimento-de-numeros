@@ -135,6 +135,7 @@ const RECEIPT = {
   sent: { label: '✓ enviado', cls: 'r-sent' },
   delivered: { label: '✓✓ entregue', cls: 'r-delivered' },
   read: { label: '✓✓ lido', cls: 'r-read' },
+  pending: { label: '⏳ aguardando (destinatário offline)', cls: 'r-pending' },
   undelivered: { label: '✗ não entregue', cls: 'r-fail' },
   error: { label: '✗ erro', cls: 'r-fail' },
 };

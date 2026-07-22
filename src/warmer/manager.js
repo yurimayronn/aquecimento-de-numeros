@@ -115,9 +115,7 @@ class SessionManager extends EventEmitter {
 
     const wasLoggedOut = session.status === 'logged_out';
     await session.stop();
-    if (wasLoggedOut) {
-      fs.rmSync(path.join(this.authRoot, id), { recursive: true, force: true });
-    }
+    if (wasLoggedOut) session.clearAuth();
     await session.start();
     return session;
   }
@@ -132,7 +130,7 @@ class SessionManager extends EventEmitter {
     this.warmup.delete(id);
     this._persistWarmup();
     // remove credenciais do disco
-    fs.rmSync(path.join(this.authRoot, id), { recursive: true, force: true });
+    session.clearAuth();
     this.emit('removed', { id });
   }
 

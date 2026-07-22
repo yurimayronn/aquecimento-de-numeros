@@ -1,24 +1,49 @@
-# Imagem para deploy always-on (EasyPanel / Docker / VPS)
+# Imagem para deploy always-on com WhatsApp Web REAL (whatsapp-web.js + Chromium)
 FROM node:20-slim
+
+# Chromium do sistema + bibliotecas necessárias para rodar headless
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    chromium \
+    ca-certificates \
+    fonts-liberation \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libatspi2.0-0 \
+    libcairo2 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libgbm1 \
+    libgtk-3-0 \
+    libnspr4 \
+    libnss3 \
+    libpango-1.0-0 \
+    libx11-6 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxkbcommon0 \
+    libxrandr2 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# instala só as dependências de produção primeiro (melhor cache)
+# não baixar o Chromium do puppeteer (usamos o do sistema)
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-# copia o restante do código
 COPY . .
 
 ENV NODE_ENV=production
 ENV PORT=3000
-# diretório de dados persistentes — monte um volume aqui no EasyPanel.
-# Usa /data (fora de /app) para não colidir com a pasta data/ do app (phrases.json).
 ENV DATA_DIR=/data
 
 EXPOSE 3000
-
-# cria o diretório de dados (será sobreposto pelo volume montado)
 RUN mkdir -p /data
 
 CMD ["node", "src/server.js"]

@@ -1,9 +1,14 @@
 # 🔥 Aquecimento de Números (WhatsApp)
 
 Sistema para **aquecer números de WhatsApp** fazendo-os conversar entre si de
-forma automática e com aparência humana. Os números conectam via **WhatsApp Web**
-(protocolo multi-dispositivo, através da biblioteca [Baileys](https://github.com/WhiskeySockets/Baileys),
-sem abrir navegador) e são gerenciados por um **painel web**.
+forma automática e com aparência humana. Cada número conecta via **WhatsApp Web
+real** ([whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js) com
+Chromium headless — literalmente uma aba do web.whatsapp.com aberta 24/7) e são
+gerenciados por um **painel web**.
+
+> 💾 **RAM:** por usar um navegador real por número, cada número consome
+> ~300–500 MB. Dimensione o servidor conforme a quantidade (ex.: 4 GB ≈ 6–8
+> números). Para muitos números, prefira mais RAM ou várias instâncias.
 
 > ⚠️ **Aviso.** Automatizar contas com bibliotecas não oficiais viola os Termos de
 > Uso do WhatsApp e pode levar ao **banimento** dos números, mesmo com aquecimento.
@@ -132,7 +137,7 @@ Para conferir se estão realmente conversando, veja no console os pares
 config.json            # parâmetros do aquecimento e do servidor
 data/phrases.json      # banco de frases
 src/server.js          # servidor web + Socket.io (painel em tempo real)
-src/warmer/session.js  # uma conexão WhatsApp (Baileys)
+src/warmer/session.js  # uma conexão WhatsApp (whatsapp-web.js + Chromium)
 src/warmer/manager.js  # gerencia todas as sessões
 src/warmer/engine.js   # orquestra as conversas entre os números
 public/                # painel web (HTML/CSS/JS)

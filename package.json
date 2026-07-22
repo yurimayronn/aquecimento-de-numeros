@@ -12,11 +12,9 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "^6.7.9",
     "express": "^4.21.2",
-    "pino": "^9.6.0",
     "qrcode": "^1.5.4",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "whatsapp-web.js": "^1.26.0"
   }
 }
