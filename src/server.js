@@ -249,4 +249,7 @@ server.listen(PORT, async () => {
   } catch (e) {
     console.error('Falha ao restaurar sessões:', e.message);
   }
+  // reenvia o estado completo: se o painel conectou durante a restauração
+  // (ex.: logo após um redeploy), ele recebe a lista já atualizada.
+  io.emit('state', snapshot());
 });
