@@ -1,14 +1,20 @@
 {
   "warming": {
-    "minIntervalSec": 30,
-    "maxIntervalSec": 120,
+    "minIntervalSec": 120,
+    "maxIntervalSec": 420,
     "minTurns": 2,
-    "maxTurns": 6,
-    "replyProbability": 0.85,
-    "conversationTtlSec": 90,
-    "dailyCapPerNumber": 80,
+    "maxTurns": 5,
+    "replyProbability": 0.8,
+    "conversationTtlSec": 120,
+    "dailyCapPerNumber": 60,
     "backoffFactor": 2,
     "maxBackoff": 16,
+    "warmup": {
+      "enabled": true,
+      "rampDays": 14,
+      "startDailyCap": 5,
+      "startIntervalMult": 3
+    },
     "activeHours": {
       "start": 8,
       "end": 22

@@ -84,6 +84,8 @@ function snapshot() {
       ...s,
       nextFireAt: engine.scheduleFor(s.id),
       multiplier: engine.multiplierFor(s.id),
+      warmupDay: engine.warmupDay(s.id),
+      dailyCap: engine.effectiveDailyCap(s.id),
     })),
     engine: engine.status(),
   };

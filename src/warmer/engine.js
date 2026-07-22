@@ -128,13 +128,22 @@ class WarmingEngine extends EventEmitter {
     const existing = this.schedules.get(id);
     if (existing) clearTimeout(existing.timer);
 
-    const multiplier = this._health(id).multiplier;
+    // ritmo = o mais lento entre a rampa de aquecimento e o ritmo adaptativo
+    const warmupMult = this._warmupMultiplier(id);
+    const healthMult = this._health(id).multiplier;
+    const multiplier = Math.max(warmupMult, healthMult);
     const base = randInt(this.cfg.minIntervalSec, this.cfg.maxIntervalSec);
     const secs = Math.round(base * multiplier);
     const nextFireAt = Date.now() + secs * 1000;
     const timer = setTimeout(() => this._fire(id), secs * 1000);
     this.schedules.set(id, { nextFireAt, timer });
-    this.emit('schedule', { id, nextFireAt, multiplier });
+    this.emit('schedule', {
+      id,
+      nextFireAt,
+      multiplier: +multiplier.toFixed(2),
+      warmupDay: this.warmupDay(id),
+      dailyCap: this.effectiveDailyCap(id),
+    });
   }
 
   async _fire(id) {
@@ -165,9 +174,42 @@ class WarmingEngine extends EventEmitter {
     return h >= start && h < end;
   }
 
-  _canSend(number) {
+  // ---------- rampa progressiva (aquecimento gradual de números novos) ----------
+  _warmupProgress(id) {
+    const w = this.cfg.warmup;
+    if (!w || !w.enabled) return 1;
+    const start = this.manager.warmupStart ? this.manager.warmupStart(id) : null;
+    if (!start) return 1;
+    const days = (Date.now() - start) / 86400000;
+    return Math.min(1, days / (w.rampDays || 14));
+  }
+
+  warmupDay(id) {
+    const start = this.manager.warmupStart ? this.manager.warmupStart(id) : null;
+    if (!start) return null;
+    return Math.floor((Date.now() - start) / 86400000) + 1; // dia 1 = primeiro dia
+  }
+
+  /** Limite diário efetivo: começa baixo e sobe até o máximo ao longo da rampa. */
+  effectiveDailyCap(id) {
+    const max = this.cfg.dailyCapPerNumber;
+    const w = this.cfg.warmup;
+    if (!w || !w.enabled) return max;
+    const startCap = w.startDailyCap || 8;
+    return Math.round(startCap + (max - startCap) * this._warmupProgress(id));
+  }
+
+  /** Multiplicador de intervalo por rampa: começa lento (ex.: 3x) e cai até 1x. */
+  _warmupMultiplier(id) {
+    const w = this.cfg.warmup;
+    if (!w || !w.enabled) return 1;
+    const s = w.startIntervalMult || 3;
+    return s - (s - 1) * this._warmupProgress(id);
+  }
+
+  _canSend(id, number) {
     this._resetDailyIfNeeded();
-    return (this.dailyCount.get(number) || 0) < this.cfg.dailyCapPerNumber;
+    return (this.dailyCount.get(number) || 0) < this.effectiveDailyCap(id);
   }
 
   _countSend(number) {
@@ -178,7 +220,7 @@ class WarmingEngine extends EventEmitter {
     const sender = this.manager.get(id);
     if (!sender || sender.status !== 'connected') return;
     if (!this._withinActiveHours()) return;
-    if (!this._canSend(sender.number)) return;
+    if (!this._canSend(id, sender.number)) return;
 
     const targets = this.manager
       .connected()
@@ -218,7 +260,7 @@ class WarmingEngine extends EventEmitter {
     const convo = this.conversations.get(key);
     if (!convo || convo.turnsRemaining <= 0) return;
     if (!this._withinActiveHours()) return;
-    if (!this._canSend(receiver.number)) return;
+    if (!this._canSend(id, receiver.number)) return;
 
     if (Math.random() > this.cfg.replyProbability) {
       this.conversations.delete(key); // às vezes não responde; encerra o par

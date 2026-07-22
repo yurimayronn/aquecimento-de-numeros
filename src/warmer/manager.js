@@ -19,13 +19,32 @@ class SessionManager extends EventEmitter {
     this.authRoot = authRoot;
     this.sessionsFile = sessionsFile;
     this.typingCfg = typingCfg;
+    this.warmupFile = path.join(path.dirname(sessionsFile), 'warmup.json');
     this.sessions = new Map(); // id -> Session
+    this.warmup = this._loadWarmup(); // id -> timestamp de início do aquecimento
     fs.mkdirSync(authRoot, { recursive: true });
   }
 
   _persistIds() {
     const ids = [...this.sessions.keys()];
     fs.writeFileSync(this.sessionsFile, JSON.stringify(ids, null, 2));
+  }
+
+  _loadWarmup() {
+    try {
+      return new Map(Object.entries(JSON.parse(fs.readFileSync(this.warmupFile, 'utf8'))));
+    } catch (_) {
+      return new Map();
+    }
+  }
+
+  _persistWarmup() {
+    fs.writeFileSync(this.warmupFile, JSON.stringify(Object.fromEntries(this.warmup), null, 2));
+  }
+
+  /** Timestamp (ms) em que o número começou a aquecer, para a rampa progressiva. */
+  warmupStart(id) {
+    return this.warmup.get(id) || null;
   }
 
   _loadIds() {
@@ -74,6 +93,12 @@ class SessionManager extends EventEmitter {
     this.sessions.set(id, session);
     if (persist) this._persistIds();
 
+    // marca o início do aquecimento (só na primeira vez; nunca sobrescreve)
+    if (!this.warmup.has(id)) {
+      this.warmup.set(id, Date.now());
+      this._persistWarmup();
+    }
+
     await session.start();
     return session;
   }
@@ -103,6 +128,9 @@ class SessionManager extends EventEmitter {
     await session.stop();
     this.sessions.delete(id);
     this._persistIds();
+    // reinicia a rampa: se readicionar, o número volta a aquecer do zero
+    this.warmup.delete(id);
+    this._persistWarmup();
     // remove credenciais do disco
     fs.rmSync(path.join(this.authRoot, id), { recursive: true, force: true });
     this.emit('removed', { id });

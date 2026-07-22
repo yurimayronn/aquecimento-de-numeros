@@ -12,6 +12,7 @@ const engineStatusEl = document.getElementById('engine-status');
 // estado local
 const sessions = new Map(); // id -> { id, status, number, qr, nextFireAt }
 let engineRunning = false;
+let rampDays = 14;
 
 const STATUS_LABEL = {
   connected: 'Conectado',
@@ -68,6 +69,7 @@ function renderSessions() {
       <div class="status s-${s.status}"><span class="dot"></span>${STATUS_LABEL[s.status] || s.status}</div>
       ${showReason ? `<div class="reason">Última queda: código ${ld.code ?? '?'} — ${escapeHtml(ld.reason)}</div>` : ''}
       ${showNext ? `<div class="next">Próximo disparo: <b id="cd-${s.id}">${countdownText(s.nextFireAt)}</b>${s.multiplier > 1 ? ` <span class="rate">ritmo ${s.multiplier}x mais lento</span>` : ''}</div>` : ''}
+      ${showNext && s.warmupDay ? `<div class="warmup">🔥 aquecimento: dia ${s.warmupDay}/${rampDays} · até ${s.dailyCap} msgs/dia</div>` : ''}
       ${canReconnect ? `<button class="reconnect" data-id="${s.id}">Reconectar</button>` : ''}
       ${showQr ? `<div class="qr"><img src="${s.qr}" alt="QR"/><small>Abra o WhatsApp &gt; Aparelhos conectados &gt; Conectar aparelho</small></div>` : ''}
     `;
@@ -221,6 +223,7 @@ socket.on('state', ({ sessions: list, engine }) => {
   for (const s of list) sessions.set(s.id, { ...s, qr: null });
   setEngine(engine.running);
   fillConfig(engine.config);
+  if (engine.config?.warmup?.rampDays) rampDays = engine.config.warmup.rampDays;
   renderSessions();
 });
 
@@ -243,12 +246,17 @@ socket.on('qr', ({ id, dataUrl }) => {
   renderSessions();
 });
 
-socket.on('schedule', ({ id, nextFireAt, multiplier }) => {
+socket.on('schedule', ({ id, nextFireAt, multiplier, warmupDay, dailyCap }) => {
   const prev = sessions.get(id);
   if (!prev) return;
   prev.nextFireAt = nextFireAt;
-  const changed = multiplier != null && multiplier !== prev.multiplier;
+  const changed =
+    (multiplier != null && multiplier !== prev.multiplier) ||
+    (warmupDay != null && warmupDay !== prev.warmupDay) ||
+    (dailyCap != null && dailyCap !== prev.dailyCap);
   if (multiplier != null) prev.multiplier = multiplier;
+  if (warmupDay != null) prev.warmupDay = warmupDay;
+  if (dailyCap != null) prev.dailyCap = dailyCap;
   const el = document.getElementById('cd-' + id);
   if (el && !changed) el.textContent = countdownText(nextFireAt);
   else renderSessions();
