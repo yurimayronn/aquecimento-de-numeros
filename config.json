@@ -7,6 +7,8 @@
     "replyProbability": 0.85,
     "conversationTtlSec": 90,
     "dailyCapPerNumber": 80,
+    "backoffFactor": 2,
+    "maxBackoff": 16,
     "activeHours": {
       "start": 8,
       "end": 22

@@ -67,7 +67,7 @@ function renderSessions() {
       </div>
       <div class="status s-${s.status}"><span class="dot"></span>${STATUS_LABEL[s.status] || s.status}</div>
       ${showReason ? `<div class="reason">Última queda: código ${ld.code ?? '?'} — ${escapeHtml(ld.reason)}</div>` : ''}
-      ${showNext ? `<div class="next">Próximo disparo: <b id="cd-${s.id}">${countdownText(s.nextFireAt)}</b></div>` : ''}
+      ${showNext ? `<div class="next">Próximo disparo: <b id="cd-${s.id}">${countdownText(s.nextFireAt)}</b>${s.multiplier > 1 ? ` <span class="rate">ritmo ${s.multiplier}x mais lento</span>` : ''}</div>` : ''}
       ${canReconnect ? `<button class="reconnect" data-id="${s.id}">Reconectar</button>` : ''}
       ${showQr ? `<div class="qr"><img src="${s.qr}" alt="QR"/><small>Abra o WhatsApp &gt; Aparelhos conectados &gt; Conectar aparelho</small></div>` : ''}
     `;
@@ -243,13 +243,22 @@ socket.on('qr', ({ id, dataUrl }) => {
   renderSessions();
 });
 
-socket.on('schedule', ({ id, nextFireAt }) => {
+socket.on('schedule', ({ id, nextFireAt, multiplier }) => {
   const prev = sessions.get(id);
   if (!prev) return;
   prev.nextFireAt = nextFireAt;
+  const changed = multiplier != null && multiplier !== prev.multiplier;
+  if (multiplier != null) prev.multiplier = multiplier;
   const el = document.getElementById('cd-' + id);
-  if (el) el.textContent = countdownText(nextFireAt);
+  if (el && !changed) el.textContent = countdownText(nextFireAt);
   else renderSessions();
+});
+
+socket.on('backoff', ({ id, multiplier }) => {
+  const prev = sessions.get(id);
+  if (!prev) return;
+  prev.multiplier = multiplier;
+  renderSessions();
 });
 
 socket.on('removed', ({ id }) => {

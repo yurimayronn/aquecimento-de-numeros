@@ -26,10 +26,53 @@ class WarmingEngine extends EventEmitter {
     this.schedules = new Map(); // id -> { nextFireAt, timer }
     this.conversations = new Map(); // pairKey -> { turnsRemaining }
     this.dailyCount = new Map(); // number -> count
+    this.health = new Map(); // id -> { multiplier, fails } (auto-regulação de ritmo)
     this._day = new Date().getDate();
 
     this.manager.on('message', (evt) => this._onIncoming(evt));
     this.manager.on('status', ({ id, status }) => this._onStatus(id, status));
+    this.manager.on('receipt', (evt) => this._onReceipt(evt));
+  }
+
+  // Ritmo adaptativo: cada número tem um multiplicador de intervalo.
+  // Falha na entrega -> aumenta (dispara mais devagar).
+  // Entrega com sucesso -> diminui (volta ao aquecimento normal).
+  _health(id) {
+    let h = this.health.get(id);
+    if (!h) {
+      h = { multiplier: 1, fails: 0 };
+      this.health.set(id, h);
+    }
+    return h;
+  }
+
+  _onReceipt({ id, status }) {
+    const h = this._health(id);
+    const before = h.multiplier;
+    const factor = this.cfg.backoffFactor || 2;
+    const max = this.cfg.maxBackoff || 16;
+
+    if (status === 'delivered' || status === 'read') {
+      h.fails = 0;
+      if (h.multiplier > 1) h.multiplier = Math.max(1, h.multiplier / factor);
+    } else if (status === 'undelivered' || status === 'error') {
+      h.fails += 1;
+      h.multiplier = Math.min(max, Math.max(factor, h.multiplier * factor));
+    } else {
+      return; // 'sent' (só chegou no servidor) não altera o ritmo
+    }
+
+    if (h.multiplier !== before) {
+      this.emit('backoff', {
+        id,
+        multiplier: h.multiplier,
+        direction: h.multiplier > before ? 'up' : 'down',
+      });
+      // aplica o novo ritmo imediatamente
+      if (this.running && this.manager.get(id)?.status === 'connected') {
+        this._schedule(id);
+      }
+    }
   }
 
   // ---------- ciclo de vida ----------
@@ -55,7 +98,7 @@ class WarmingEngine extends EventEmitter {
 
   /** Atualiza parâmetros em tempo real e reagenda os timers ativos. */
   updateConfig(patch) {
-    const numeric = ['minIntervalSec', 'maxIntervalSec', 'minTurns', 'maxTurns', 'dailyCapPerNumber'];
+    const numeric = ['minIntervalSec', 'maxIntervalSec', 'minTurns', 'maxTurns', 'dailyCapPerNumber', 'backoffFactor', 'maxBackoff'];
     for (const k of numeric) {
       if (patch[k] != null) this.cfg[k] = Number(patch[k]);
     }
@@ -85,11 +128,13 @@ class WarmingEngine extends EventEmitter {
     const existing = this.schedules.get(id);
     if (existing) clearTimeout(existing.timer);
 
-    const secs = randInt(this.cfg.minIntervalSec, this.cfg.maxIntervalSec);
+    const multiplier = this._health(id).multiplier;
+    const base = randInt(this.cfg.minIntervalSec, this.cfg.maxIntervalSec);
+    const secs = Math.round(base * multiplier);
     const nextFireAt = Date.now() + secs * 1000;
     const timer = setTimeout(() => this._fire(id), secs * 1000);
     this.schedules.set(id, { nextFireAt, timer });
-    this.emit('schedule', { id, nextFireAt });
+    this.emit('schedule', { id, nextFireAt, multiplier });
   }
 
   async _fire(id) {
@@ -215,12 +260,19 @@ class WarmingEngine extends EventEmitter {
     return this.schedules.get(id)?.nextFireAt || null;
   }
 
+  multiplierFor(id) {
+    return this.health.get(id)?.multiplier || 1;
+  }
+
   status() {
     return {
       running: this.running,
       config: this.cfg,
       schedules: Object.fromEntries(
         [...this.schedules.entries()].map(([id, s]) => [id, s.nextFireAt])
+      ),
+      multipliers: Object.fromEntries(
+        [...this.health.entries()].map(([id, h]) => [id, h.multiplier])
       ),
       dailyCounts: Object.fromEntries(this.dailyCount),
     };

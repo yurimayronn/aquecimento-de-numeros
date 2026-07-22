@@ -83,6 +83,7 @@ function snapshot() {
     sessions: manager.list().map((s) => ({
       ...s,
       nextFireAt: engine.scheduleFor(s.id),
+      multiplier: engine.multiplierFor(s.id),
     })),
     engine: engine.status(),
   };
@@ -187,6 +188,15 @@ manager.on('sessionError', ({ id, err }) => {
 
 engine.on('state', (s) => io.emit('engine', s));
 engine.on('schedule', (s) => io.emit('schedule', s));
+engine.on('backoff', ({ id, multiplier, direction }) => {
+  const txt =
+    direction === 'up'
+      ? `[${id}] falha na entrega — ritmo reduzido (${multiplier}x mais lento)`
+      : `[${id}] entregando de novo — acelerando (${multiplier}x)`;
+  console.log(txt);
+  io.emit('backoff', { id, multiplier, direction });
+  io.emit('log', { time: Date.now(), level: direction === 'up' ? 'warn' : 'info', text: txt });
+});
 engine.on('config', (c) => io.emit('config', c));
 engine.on('activity', (a) => {
   console.log(`[envio] +${a.from} → +${a.to} (${a.type}): ${a.text}`);
