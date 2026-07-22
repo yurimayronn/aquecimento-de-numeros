@@ -86,6 +86,7 @@ function snapshot() {
       multiplier: engine.multiplierFor(s.id),
       warmupDay: engine.warmupDay(s.id),
       dailyCap: engine.effectiveDailyCap(s.id),
+      healthy: engine.isHealthy(s.id),
     })),
     engine: engine.status(),
   };
@@ -190,6 +191,20 @@ manager.on('sessionError', ({ id, err }) => {
 
 engine.on('state', (s) => io.emit('engine', s));
 engine.on('schedule', (s) => io.emit('schedule', s));
+engine.on('log', ({ level, text }) => {
+  console.log(`[${level || 'info'}] ${text}`);
+  io.emit('log', { time: Date.now(), level: level || 'info', text });
+});
+
+engine.on('health', ({ id, healthy, healthyCount }) => {
+  const txt = healthy
+    ? `[${id}] voltou a entregar — marcado como saudável (${healthyCount} saudáveis)`
+    : `[${id}] com erro de envio — fora do rodízio de conversas (${healthyCount} saudáveis)`;
+  console.log(txt);
+  io.emit('health', { id, healthy });
+  io.emit('log', { time: Date.now(), level: healthy ? 'info' : 'warn', text: txt });
+});
+
 engine.on('backoff', ({ id, multiplier, direction }) => {
   const txt =
     direction === 'up'

@@ -66,7 +66,7 @@ function renderSessions() {
         </div>
         <button class="remove" title="Remover" data-id="${s.id}">✕</button>
       </div>
-      <div class="status s-${s.status}"><span class="dot"></span>${STATUS_LABEL[s.status] || s.status}</div>
+      <div class="status s-${s.status}"><span class="dot"></span>${STATUS_LABEL[s.status] || s.status}${s.status === 'connected' && s.healthy === false ? ' <span class="unhealthy">⚠ com erro de envio</span>' : ''}</div>
       ${showReason ? `<div class="reason">Última queda: código ${ld.code ?? '?'} — ${escapeHtml(ld.reason)}</div>` : ''}
       ${showNext ? `<div class="next">Próximo disparo: <b id="cd-${s.id}">${countdownText(s.nextFireAt)}</b>${s.multiplier > 1 ? ` <span class="rate">ritmo ${s.multiplier}x mais lento</span>` : ''}</div>` : ''}
       ${showNext && s.warmupDay ? `<div class="warmup">🔥 aquecimento: dia ${s.warmupDay}/${rampDays} · até ${s.dailyCap} msgs/dia</div>` : ''}
@@ -266,6 +266,13 @@ socket.on('backoff', ({ id, multiplier }) => {
   const prev = sessions.get(id);
   if (!prev) return;
   prev.multiplier = multiplier;
+  renderSessions();
+});
+
+socket.on('health', ({ id, healthy }) => {
+  const prev = sessions.get(id);
+  if (!prev) return;
+  prev.healthy = healthy;
   renderSessions();
 });
 

@@ -46,9 +46,34 @@ class WarmingEngine extends EventEmitter {
     return h;
   }
 
+  // Um número é "saudável" enquanto não acumula falhas de entrega demais.
+  // Números com erro não são usados como alvo de conversa (nem recebem
+  // respostas), e só voltam a ser "bons" quando uma entrega tem sucesso.
+  isHealthy(id) {
+    const h = this.health.get(id);
+    if (!h) return true; // sem histórico = saudável
+    return h.fails < (this.cfg.unhealthyAfterFails || 3);
+  }
+
+  healthyConnected() {
+    return this.manager.connected().filter((s) => this.isHealthy(s.id));
+  }
+
+  // avisa (no máx. 1x/min) quando não há números saudáveis suficientes
+  _warnNoHealthyPair() {
+    const now = Date.now();
+    if (this._lastNoPairWarn && now - this._lastNoPairWarn < 60000) return;
+    this._lastNoPairWarn = now;
+    this.emit('log', {
+      level: 'warn',
+      text: `aquecimento pausado: são necessários ao menos 2 números saudáveis (há ${this.healthyConnected().length})`,
+    });
+  }
+
   _onReceipt({ id, status }) {
     const h = this._health(id);
     const before = h.multiplier;
+    const wasHealthy = this.isHealthy(id);
     const factor = this.cfg.backoffFactor || 2;
     const max = this.cfg.maxBackoff || 16;
 
@@ -68,10 +93,14 @@ class WarmingEngine extends EventEmitter {
         multiplier: h.multiplier,
         direction: h.multiplier > before ? 'up' : 'down',
       });
-      // aplica o novo ritmo imediatamente
       if (this.running && this.manager.get(id)?.status === 'connected') {
         this._schedule(id);
       }
+    }
+
+    const nowHealthy = this.isHealthy(id);
+    if (nowHealthy !== wasHealthy) {
+      this.emit('health', { id, healthy: nowHealthy, healthyCount: this.healthyConnected().length });
     }
   }
 
@@ -98,7 +127,7 @@ class WarmingEngine extends EventEmitter {
 
   /** Atualiza parâmetros em tempo real e reagenda os timers ativos. */
   updateConfig(patch) {
-    const numeric = ['minIntervalSec', 'maxIntervalSec', 'minTurns', 'maxTurns', 'dailyCapPerNumber', 'backoffFactor', 'maxBackoff'];
+    const numeric = ['minIntervalSec', 'maxIntervalSec', 'minTurns', 'maxTurns', 'dailyCapPerNumber', 'backoffFactor', 'maxBackoff', 'unhealthyAfterFails'];
     for (const k of numeric) {
       if (patch[k] != null) this.cfg[k] = Number(patch[k]);
     }
@@ -222,9 +251,15 @@ class WarmingEngine extends EventEmitter {
     if (!this._withinActiveHours()) return;
     if (!this._canSend(id, sender.number)) return;
 
-    const targets = this.manager
-      .connected()
-      .filter((s) => s.number !== sender.number);
+    // Precisa de pelo menos 2 números saudáveis para aquecer.
+    // Alvos: apenas números saudáveis (bom conversa com bom), nunca números
+    // com erro de envio.
+    const healthy = this.healthyConnected();
+    if (healthy.length < 2) {
+      this._warnNoHealthyPair();
+      return;
+    }
+    const targets = healthy.filter((s) => s.number !== sender.number);
     if (targets.length === 0) return;
     const target = choice(targets);
 
@@ -255,6 +290,10 @@ class WarmingEngine extends EventEmitter {
     const receiver = this.manager.get(id);
     if (!receiver || receiver.status !== 'connected') return;
     if (!this.manager.connectedNumbers().has(from)) return; // só entre números aquecidos
+
+    // não responder (não enviar) para números com erro de envio
+    const fromSession = this.manager.byNumber(from);
+    if (fromSession && !this.isHealthy(fromSession.id)) return;
 
     const key = pairKey(receiver.number, from);
     const convo = this.conversations.get(key);
@@ -316,6 +355,7 @@ class WarmingEngine extends EventEmitter {
       multipliers: Object.fromEntries(
         [...this.health.entries()].map(([id, h]) => [id, h.multiplier])
       ),
+      healthyCount: this.healthyConnected().length,
       dailyCounts: Object.fromEntries(this.dailyCount),
     };
   }

@@ -9,6 +9,7 @@
     "dailyCapPerNumber": 60,
     "backoffFactor": 2,
     "maxBackoff": 16,
+    "unhealthyAfterFails": 3,
     "warmup": {
       "enabled": true,
       "rampDays": 14,
