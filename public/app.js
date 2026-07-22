@@ -186,15 +186,39 @@ function setEngine(running) {
   engineStatusEl.className = 'badge ' + (running ? 'on' : 'off');
 }
 
+function setField(id, v) {
+  const el = document.getElementById(id);
+  if (!el || v == null) return;
+  if (el.type === 'checkbox') el.checked = !!v;
+  else el.value = v;
+}
+
 function fillConfig(cfg) {
   if (!cfg) return;
-  document.getElementById('cfg-min').value = cfg.minIntervalSec;
-  document.getElementById('cfg-max').value = cfg.maxIntervalSec;
-  document.getElementById('cfg-tmin').value = cfg.minTurns;
-  document.getElementById('cfg-tmax').value = cfg.maxTurns;
-  document.getElementById('cfg-cap').value = cfg.dailyCapPerNumber;
-  document.getElementById('cfg-hstart').value = cfg.activeHours.start;
-  document.getElementById('cfg-hend').value = cfg.activeHours.end;
+  setField('cfg-minIntervalSec', cfg.minIntervalSec);
+  setField('cfg-maxIntervalSec', cfg.maxIntervalSec);
+  setField('cfg-minTurns', cfg.minTurns);
+  setField('cfg-maxTurns', cfg.maxTurns);
+  setField('cfg-replyProbability', cfg.replyProbability);
+  setField('cfg-conversationTtlSec', cfg.conversationTtlSec);
+  setField('cfg-dailyCapPerNumber', cfg.dailyCapPerNumber);
+  setField('cfg-hstart', cfg.activeHours && cfg.activeHours.start);
+  setField('cfg-hend', cfg.activeHours && cfg.activeHours.end);
+  if (cfg.warmup) {
+    setField('cfg-warmupEnabled', cfg.warmup.enabled);
+    setField('cfg-rampDays', cfg.warmup.rampDays);
+    setField('cfg-startDailyCap', cfg.warmup.startDailyCap);
+    setField('cfg-startIntervalMult', cfg.warmup.startIntervalMult);
+  }
+  setField('cfg-unhealthyAfterFails', cfg.unhealthyAfterFails);
+  setField('cfg-backoffFactor', cfg.backoffFactor);
+  setField('cfg-maxBackoff', cfg.maxBackoff);
+  if (cfg.typing) {
+    setField('cfg-baseMs', cfg.typing.baseMs);
+    setField('cfg-perCharMs', cfg.typing.perCharMs);
+    setField('cfg-maxMs', cfg.typing.maxMs);
+    setField('cfg-readDelayMs', cfg.typing.readDelayMs);
+  }
 }
 
 // ---------- ações ----------
@@ -233,20 +257,64 @@ document.getElementById('add-form').addEventListener('submit', (e) => {
   input.value = '';
 });
 
+const numField = (id) => {
+  const el = document.getElementById(id);
+  return el && el.value !== '' ? +el.value : undefined;
+};
+const chkField = (id) => {
+  const el = document.getElementById(id);
+  return el ? el.checked : undefined;
+};
+
 document.getElementById('config-form').addEventListener('submit', (e) => {
   e.preventDefault();
   post('/api/config', {
-    minIntervalSec: +document.getElementById('cfg-min').value,
-    maxIntervalSec: +document.getElementById('cfg-max').value,
-    minTurns: +document.getElementById('cfg-tmin').value,
-    maxTurns: +document.getElementById('cfg-tmax').value,
-    dailyCapPerNumber: +document.getElementById('cfg-cap').value,
-    activeHours: {
-      start: +document.getElementById('cfg-hstart').value,
-      end: +document.getElementById('cfg-hend').value,
+    minIntervalSec: numField('cfg-minIntervalSec'),
+    maxIntervalSec: numField('cfg-maxIntervalSec'),
+    minTurns: numField('cfg-minTurns'),
+    maxTurns: numField('cfg-maxTurns'),
+    replyProbability: numField('cfg-replyProbability'),
+    conversationTtlSec: numField('cfg-conversationTtlSec'),
+    dailyCapPerNumber: numField('cfg-dailyCapPerNumber'),
+    activeHours: { start: numField('cfg-hstart'), end: numField('cfg-hend') },
+    warmup: {
+      enabled: chkField('cfg-warmupEnabled'),
+      rampDays: numField('cfg-rampDays'),
+      startDailyCap: numField('cfg-startDailyCap'),
+      startIntervalMult: numField('cfg-startIntervalMult'),
     },
+    unhealthyAfterFails: numField('cfg-unhealthyAfterFails'),
+    backoffFactor: numField('cfg-backoffFactor'),
+    maxBackoff: numField('cfg-maxBackoff'),
+    typing: {
+      baseMs: numField('cfg-baseMs'),
+      perCharMs: numField('cfg-perCharMs'),
+      maxMs: numField('cfg-maxMs'),
+      readDelayMs: numField('cfg-readDelayMs'),
+    },
+  }).then((res) => {
+    if (res && res.ok) flashSaved();
   });
 });
+
+// recolher/expandir a aba de configurações
+document.getElementById('settings-toggle').addEventListener('click', () => {
+  const body = document.getElementById('settings-body');
+  body.hidden = !body.hidden;
+  document.getElementById('settings-chev').textContent = body.hidden ? '▸' : '▾';
+});
+
+function flashSaved() {
+  const btn = document.querySelector('#config-form button[type="submit"]');
+  if (!btn) return;
+  const orig = btn.textContent;
+  btn.textContent = '✓ Salvo';
+  btn.classList.add('saved');
+  setTimeout(() => {
+    btn.textContent = orig;
+    btn.classList.remove('saved');
+  }, 1500);
+}
 
 document.getElementById('btn-start').addEventListener('click', () => post('/api/engine/start'));
 document.getElementById('btn-stop').addEventListener('click', () => post('/api/engine/stop'));

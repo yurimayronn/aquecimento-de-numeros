@@ -20,18 +20,70 @@
   <section class="summary" id="summary"></section>
 
   <section class="settings">
-    <h2>Configurações do aquecimento</h2>
-    <form id="config-form">
-      <label>Intervalo mín (s)<input type="number" min="5" id="cfg-min" /></label>
-      <label>Intervalo máx (s)<input type="number" min="5" id="cfg-max" /></label>
-      <label>Trocas mín<input type="number" min="1" id="cfg-tmin" /></label>
-      <label>Trocas máx<input type="number" min="1" id="cfg-tmax" /></label>
-      <label>Limite/dia por nº<input type="number" min="1" id="cfg-cap" /></label>
-      <label>Hora início<input type="number" min="0" max="23" id="cfg-hstart" /></label>
-      <label>Hora fim<input type="number" min="1" max="24" id="cfg-hend" /></label>
-      <button type="submit">Salvar</button>
-    </form>
-    <p class="hint">O intervalo é por número: cada número inicia uma conversa a cada X segundos (sorteado entre mín e máx). Alterações valem na hora.</p>
+    <h2 class="settings-toggle" id="settings-toggle">⚙ Configurações do aquecimento <span class="chev" id="settings-chev">▸</span></h2>
+    <div class="settings-body" id="settings-body" hidden>
+      <form id="config-form">
+
+        <div class="cfg-group">
+          <div class="cfg-group-title">Disparo (ritmo base)</div>
+          <div class="cfg-fields">
+            <label>Intervalo mín (s)<input type="number" min="5" id="cfg-minIntervalSec" /><small>tempo mínimo entre disparos de cada número</small></label>
+            <label>Intervalo máx (s)<input type="number" min="5" id="cfg-maxIntervalSec" /><small>tempo máximo (sorteado entre mín e máx)</small></label>
+          </div>
+        </div>
+
+        <div class="cfg-group">
+          <div class="cfg-group-title">Conversas</div>
+          <div class="cfg-fields">
+            <label>Trocas mín<input type="number" min="1" id="cfg-minTurns" /><small>idas e voltas por conversa</small></label>
+            <label>Trocas máx<input type="number" min="1" id="cfg-maxTurns" /></label>
+            <label>Prob. de resposta<input type="number" min="0" max="1" step="0.05" id="cfg-replyProbability" /><small>0 a 1 (0,8 = responde 80%)</small></label>
+            <label>TTL da conversa (s)<input type="number" min="10" id="cfg-conversationTtlSec" /><small>tempo até liberar o par de novo</small></label>
+          </div>
+        </div>
+
+        <div class="cfg-group">
+          <div class="cfg-group-title">Limites &amp; horário</div>
+          <div class="cfg-fields">
+            <label>Limite/dia por nº<input type="number" min="1" id="cfg-dailyCapPerNumber" /><small>teto após a rampa</small></label>
+            <label>Hora início<input type="number" min="0" max="23" id="cfg-hstart" /></label>
+            <label>Hora fim<input type="number" min="1" max="24" id="cfg-hend" /></label>
+          </div>
+        </div>
+
+        <div class="cfg-group">
+          <div class="cfg-group-title">Rampa de aquecimento (número novo sobe devagar)</div>
+          <div class="cfg-fields">
+            <label class="cfg-check"><input type="checkbox" id="cfg-warmupEnabled" /> Rampa ativada</label>
+            <label>Dias até o máximo<input type="number" min="1" id="cfg-rampDays" /><small>ex.: 14 dias</small></label>
+            <label>Cap inicial/dia<input type="number" min="1" id="cfg-startDailyCap" /><small>volume no dia 1</small></label>
+            <label>Intervalo inicial (x)<input type="number" min="1" step="0.5" id="cfg-startIntervalMult" /><small>3 = 3x mais lento no início</small></label>
+          </div>
+        </div>
+
+        <div class="cfg-group">
+          <div class="cfg-group-title">Saúde &amp; ritmo adaptativo</div>
+          <div class="cfg-fields">
+            <label>Falhas p/ marcar erro<input type="number" min="1" id="cfg-unhealthyAfterFails" /><small>nº de não-entregues seguidas</small></label>
+            <label>Fator de recuo<input type="number" min="1" step="0.5" id="cfg-backoffFactor" /><small>quanto desacelera a cada falha</small></label>
+            <label>Recuo máximo (x)<input type="number" min="1" id="cfg-maxBackoff" /><small>teto de lentidão</small></label>
+          </div>
+        </div>
+
+        <div class="cfg-group">
+          <div class="cfg-group-title">Humanização (digitando…)</div>
+          <div class="cfg-fields">
+            <label>Base (ms)<input type="number" min="0" id="cfg-baseMs" /></label>
+            <label>Por caractere (ms)<input type="number" min="0" id="cfg-perCharMs" /></label>
+            <label>Máximo (ms)<input type="number" min="0" id="cfg-maxMs" /></label>
+            <label>Atraso leitura (ms)<input type="number" min="0" id="cfg-readDelayMs" /></label>
+          </div>
+        </div>
+
+        <button type="submit">Salvar configurações</button>
+        <p class="hint">Alterações valem na hora e são salvas no volume (sobrevivem a redeploys).</p>
+      </form>
+    </div>
   </section>
 
   <main>

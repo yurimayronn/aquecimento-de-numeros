@@ -114,10 +114,19 @@ main {
   border-radius: 12px;
   padding: 18px;
 }
-#config-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.settings-toggle { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 8px; margin: 0; }
+.settings-toggle .chev { font-size: 12px; color: var(--muted); }
+.settings-body { margin-top: 16px; }
+
+.cfg-group { border-top: 1px solid var(--border); padding: 14px 0; }
+.cfg-group:first-child { border-top: 0; padding-top: 0; }
+.cfg-group-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); margin-bottom: 10px; }
+.cfg-fields { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+
 #config-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
-#config-form input {
-  width: 90px;
+#config-form label small { font-size: 10.5px; color: #6b7280; }
+#config-form input[type="number"] {
+  width: 120px;
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--text);
@@ -125,7 +134,11 @@ main {
   border-radius: 8px;
   font-size: 14px;
 }
-.settings .hint { color: var(--muted); font-size: 13px; margin: 12px 0 0; }
+#config-form label.cfg-check { flex-direction: row; align-items: center; gap: 8px; font-size: 14px; color: var(--text); }
+#config-form label.cfg-check input { width: auto; }
+#config-form button[type="submit"] { margin-top: 14px; }
+#config-form button.saved { background: var(--accent); color: #fff; }
+.settings .hint { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
 
 #add-form { display: flex; gap: 8px; margin-bottom: 16px; }
 #add-form input {

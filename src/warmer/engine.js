@@ -127,16 +127,47 @@ class WarmingEngine extends EventEmitter {
 
   /** Atualiza parâmetros em tempo real e reagenda os timers ativos. */
   updateConfig(patch) {
-    const numeric = ['minIntervalSec', 'maxIntervalSec', 'minTurns', 'maxTurns', 'dailyCapPerNumber', 'backoffFactor', 'maxBackoff', 'unhealthyAfterFails'];
+    const numeric = [
+      'minIntervalSec', 'maxIntervalSec', 'minTurns', 'maxTurns',
+      'dailyCapPerNumber', 'conversationTtlSec', 'backoffFactor', 'maxBackoff',
+      'unhealthyAfterFails',
+    ];
     for (const k of numeric) {
-      if (patch[k] != null) this.cfg[k] = Number(patch[k]);
+      if (patch[k] != null && patch[k] !== '') this.cfg[k] = Number(patch[k]);
     }
-    if (patch.replyProbability != null) this.cfg.replyProbability = Number(patch.replyProbability);
-    if (patch.activeHours) this.cfg.activeHours = patch.activeHours;
+    if (patch.replyProbability != null && patch.replyProbability !== '') {
+      this.cfg.replyProbability = Number(patch.replyProbability);
+    }
+    if (patch.activeHours) {
+      this.cfg.activeHours = {
+        start: Number(patch.activeHours.start),
+        end: Number(patch.activeHours.end),
+      };
+    }
+    if (patch.warmup) {
+      this.cfg.warmup = this.cfg.warmup || {};
+      if (patch.warmup.enabled != null) this.cfg.warmup.enabled = !!patch.warmup.enabled;
+      for (const k of ['rampDays', 'startDailyCap', 'startIntervalMult']) {
+        if (patch.warmup[k] != null && patch.warmup[k] !== '') {
+          this.cfg.warmup[k] = Number(patch.warmup[k]);
+        }
+      }
+    }
+    if (patch.typing) {
+      // muta o mesmo objeto (as sessões guardam referência a ele)
+      this.cfg.typing = this.cfg.typing || {};
+      for (const k of ['baseMs', 'perCharMs', 'maxMs', 'readDelayMs']) {
+        if (patch.typing[k] != null && patch.typing[k] !== '') {
+          this.cfg.typing[k] = Number(patch.typing[k]);
+        }
+      }
+    }
 
+    // sanidade: máx >= mín
     if (this.cfg.maxIntervalSec < this.cfg.minIntervalSec) {
       this.cfg.maxIntervalSec = this.cfg.minIntervalSec;
     }
+    if (this.cfg.maxTurns < this.cfg.minTurns) this.cfg.maxTurns = this.cfg.minTurns;
 
     if (this.running) {
       for (const id of [...this.schedules.keys()]) this._schedule(id);
