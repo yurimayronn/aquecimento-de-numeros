@@ -173,7 +173,9 @@ manager.on('log', ({ id, level, text }) => {
   io.emit('log', { time: Date.now(), level, text });
 });
 
-manager.on('disconnect', (info) => io.emit('disconnect', info));
+// obs.: o motivo da queda já é enviado ao painel via evento 'session'
+// (campo lastDisconnect). Não usar 'disconnect' aqui — é evento reservado
+// no Socket.io e emiti-lo derruba o servidor.
 
 manager.on('sessionError', ({ id, err }) => {
   io.emit('log', {
