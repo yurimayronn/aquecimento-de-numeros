@@ -235,6 +235,25 @@ main {
 }
 
 .activity { display: flex; flex-direction: column; gap: 8px; max-height: 70vh; overflow-y: auto; }
+
+/* bolhas de chat */
+.chat-row { display: flex; }
+.chat-row.out { justify-content: flex-end; }
+.chat-row.in { justify-content: flex-start; }
+.chat-row .bubble {
+  max-width: 82%;
+  border-radius: 12px;
+  padding: 7px 11px;
+  font-size: 14px;
+  line-height: 1.35;
+}
+.chat-row.out .bubble { background: #075e54; border-bottom-right-radius: 3px; }
+.chat-row.in .bubble { background: var(--panel-2); border-bottom-left-radius: 3px; }
+.bubble .bmeta { font-size: 10.5px; color: var(--muted); margin-bottom: 2px; }
+.chat-row.out .bubble .bmeta { color: #9fd3cb; }
+.bubble .btext { color: var(--text); word-break: break-word; }
+.bubble .bfoot { font-size: 10.5px; color: var(--muted); margin-top: 3px; display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+.chat-row.out .bubble .bfoot { color: #9fd3cb; }
 .msg {
   background: var(--panel-2);
   border-radius: 8px;

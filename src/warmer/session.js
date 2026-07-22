@@ -61,7 +61,8 @@ class Session extends EventEmitter {
     this._stopping = false;
     this._attempts = 0;
     this._reconnectTimer = null;
-    this._pending = new Map(); // msgId -> { toNumber, timer }
+    this._presenceTimer = null;
+    this._pending = new Map(); // msgId -> { toNumber, timer, gotServerAck }
   }
 
   async start() {
@@ -93,7 +94,7 @@ class Session extends EventEmitter {
       logger: baileysLogger,
       printQRInTerminal: false,
       browser: ['Aquecedor', 'Chrome', '1.0.0'],
-      markOnlineOnConnect: false,
+      markOnlineOnConnect: true, // aparelho aparece online (como aba aberta)
       syncFullHistory: false,
       // --- robustez de conexão (reduz os timeouts 408 em ambiente de datacenter) ---
       connectTimeoutMs: 60_000,
@@ -110,16 +111,44 @@ class Session extends EventEmitter {
     sock.ev.on('messages.update', (u) => this._onMessagesUpdate(u));
   }
 
-  // Rastreia o status de entrega de uma mensagem enviada por este número.
-  // Se nenhum "entregue" chegar em 45s, marca como não entregue (bloqueio).
+  // mantém o aparelho ativamente online (como uma aba aberta 24/7)
+  _startPresence() {
+    if (this._presenceTimer) clearInterval(this._presenceTimer);
+    const ping = () => {
+      try {
+        this.sock && this.sock.sendPresenceUpdate('available');
+      } catch (_) {
+        /* noop */
+      }
+    };
+    ping();
+    this._presenceTimer = setInterval(ping, 60000);
+  }
+
+  _stopPresence() {
+    if (this._presenceTimer) {
+      clearInterval(this._presenceTimer);
+      this._presenceTimer = null;
+    }
+  }
+
+  // Rastreia o status de entrega. No timeout distingue:
+  //  - chegou ao servidor mas não entregou -> 'pending' (destinatário offline),
+  //    NÃO é falha de envio;
+  //  - nem chegou ao servidor -> 'undelivered' (recusa/bloqueio real).
   _trackSend(msgId, toNumber) {
     const timer = setTimeout(() => {
-      if (this._pending.has(msgId)) {
+      const p = this._pending.get(msgId);
+      if (p) {
         this._pending.delete(msgId);
-        this.emit('receipt', { msgId, to: toNumber, status: 'undelivered' });
+        this.emit('receipt', {
+          msgId,
+          to: toNumber,
+          status: p.gotServerAck ? 'pending' : 'undelivered',
+        });
       }
     }, 45000);
-    this._pending.set(msgId, { toNumber, timer });
+    this._pending.set(msgId, { toNumber, timer, gotServerAck: false });
   }
 
   _onMessagesUpdate(updates) {
@@ -137,6 +166,7 @@ class Session extends EventEmitter {
       if (!status) continue;
 
       const pending = this._pending.get(msgId);
+      if (status === 'sent') pending.gotServerAck = true; // chegou ao servidor
       // status terminais: para de rastrear e limpa o timeout
       if (status === 'delivered' || status === 'read' || status === 'error') {
         clearTimeout(pending.timer);
@@ -164,9 +194,11 @@ class Session extends EventEmitter {
       this.emit('status', this.status);
       this.emit('ready');
       this.emit('log', { level: 'info', text: `[${this.id}] conectado (+${this.number})` });
+      this._startPresence();
     }
 
     if (connection === 'close') {
+      this._stopPresence();
       this._handleClose(lastDisconnect);
     }
   }
@@ -268,6 +300,7 @@ class Session extends EventEmitter {
 
   async stop() {
     this._stopping = true;
+    this._stopPresence();
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;

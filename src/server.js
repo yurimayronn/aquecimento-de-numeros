@@ -223,6 +223,13 @@ engine.on('activity', (a) => {
 // mensagens recebidas de outro número aquecido (prova de que estão conversando)
 manager.on('message', ({ id, from, text }) => {
   console.log(`[recebido] ${id} <- +${from}: ${text}`);
+  const receiver = manager.get(id);
+  io.emit('incoming', {
+    to: receiver && receiver.number,
+    from,
+    text,
+    time: Date.now(),
+  });
 });
 
 // status de entrega de cada mensagem enviada (✓ enviado / ✓✓ entregue / ✗ não entregue)

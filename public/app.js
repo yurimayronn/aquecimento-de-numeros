@@ -135,19 +135,38 @@ const RECEIPT = {
   sent: { label: '✓ enviado', cls: 'r-sent' },
   delivered: { label: '✓✓ entregue', cls: 'r-delivered' },
   read: { label: '✓✓ lido', cls: 'r-read' },
+  pending: { label: '⏳ aguardando (offline)', cls: 'r-pending' },
   undelivered: { label: '✗ não entregue', cls: 'r-fail' },
   error: { label: '✗ erro', cls: 'r-fail' },
 };
 
-function addActivity({ type, from, to, text, time, msgId }) {
+// mensagem ENVIADA (bolha à direita)
+function addActivity({ from, to, text, time, msgId }) {
   const wrap = document.createElement('div');
-  wrap.className = 'msg' + (type === 'closing' ? ' closing' : '');
+  wrap.className = 'chat-row out';
   const badge = msgId
     ? `<span class="receipt r-pending" id="r-${msgId}">enviando…</span>`
     : '';
   wrap.innerHTML = `
-    <div class="meta">${fmtTime(time)} · +${from} → +${to} · ${type} ${badge}</div>
-    <div>${escapeHtml(text)}</div>`;
+    <div class="bubble">
+      <div class="bmeta">+${from} → +${to}</div>
+      <div class="btext">${escapeHtml(text)}</div>
+      <div class="bfoot">${fmtTime(time)} ${badge}</div>
+    </div>`;
+  activityEl.prepend(wrap);
+  trimActivity();
+}
+
+// mensagem RECEBIDA (bolha à esquerda)
+function addIncoming({ from, to, text, time }) {
+  const wrap = document.createElement('div');
+  wrap.className = 'chat-row in';
+  wrap.innerHTML = `
+    <div class="bubble">
+      <div class="bmeta">+${from}${to ? ' → +' + to : ''}</div>
+      <div class="btext">${escapeHtml(text)}</div>
+      <div class="bfoot">${fmtTime(time)}</div>
+    </div>`;
   activityEl.prepend(wrap);
   trimActivity();
 }
@@ -393,5 +412,6 @@ socket.on('engine', ({ running }) => {
 });
 socket.on('config', (cfg) => fillConfig(cfg));
 socket.on('activity', addActivity);
+socket.on('incoming', addIncoming);
 socket.on('receipt', updateReceipt);
 socket.on('log', addLog);
