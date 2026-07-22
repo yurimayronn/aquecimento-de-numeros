@@ -91,14 +91,35 @@ setInterval(() => {
   }
 }, 1000);
 
-function addActivity({ type, from, to, text, time }) {
+const RECEIPT = {
+  sent: { label: '✓ enviado', cls: 'r-sent' },
+  delivered: { label: '✓✓ entregue', cls: 'r-delivered' },
+  read: { label: '✓✓ lido', cls: 'r-read' },
+  undelivered: { label: '✗ não entregue', cls: 'r-fail' },
+  error: { label: '✗ erro', cls: 'r-fail' },
+};
+
+function addActivity({ type, from, to, text, time, msgId }) {
   const wrap = document.createElement('div');
   wrap.className = 'msg' + (type === 'closing' ? ' closing' : '');
+  const badge = msgId
+    ? `<span class="receipt r-pending" id="r-${msgId}">enviando…</span>`
+    : '';
   wrap.innerHTML = `
-    <div class="meta">${fmtTime(time)} · +${from} → +${to} · ${type}</div>
+    <div class="meta">${fmtTime(time)} · +${from} → +${to} · ${type} ${badge}</div>
     <div>${escapeHtml(text)}</div>`;
   activityEl.prepend(wrap);
   trimActivity();
+}
+
+function updateReceipt({ msgId, status }) {
+  if (!msgId) return;
+  const el = document.getElementById('r-' + msgId);
+  if (!el) return;
+  const r = RECEIPT[status];
+  if (!r) return;
+  el.textContent = r.label;
+  el.className = 'receipt ' + r.cls;
 }
 
 function addLog({ time, text, level }) {
@@ -242,4 +263,5 @@ socket.on('engine', ({ running }) => {
 });
 socket.on('config', (cfg) => fillConfig(cfg));
 socket.on('activity', addActivity);
+socket.on('receipt', updateReceipt);
 socket.on('log', addLog);

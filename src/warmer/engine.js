@@ -195,7 +195,7 @@ class WarmingEngine extends EventEmitter {
 
   async _deliver(senderSession, toNumber, text, kind) {
     try {
-      await senderSession.sendHuman(toNumber, text);
+      const msgId = await senderSession.sendHuman(toNumber, text);
       this._countSend(senderSession.number);
       this.emit('activity', {
         type: kind,
@@ -203,6 +203,7 @@ class WarmingEngine extends EventEmitter {
         to: toNumber,
         text,
         time: Date.now(),
+        msgId,
       });
     } catch (e) {
       this.emit('error', e);

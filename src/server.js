@@ -197,6 +197,12 @@ engine.on('activity', (a) => {
 manager.on('message', ({ id, from, text }) => {
   console.log(`[recebido] ${id} <- +${from}: ${text}`);
 });
+
+// status de entrega de cada mensagem enviada (✓ enviado / ✓✓ entregue / ✗ não entregue)
+manager.on('receipt', ({ id, msgId, to, status }) => {
+  console.log(`[entrega] ${id} → +${to}: ${status}`);
+  io.emit('receipt', { id, msgId, to, status });
+});
 engine.on('error', (e) =>
   io.emit('log', { time: Date.now(), level: 'error', text: e.message })
 );

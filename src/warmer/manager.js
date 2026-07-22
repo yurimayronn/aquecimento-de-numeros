@@ -66,6 +66,7 @@ class SessionManager extends EventEmitter {
       this.emit('message', { id, from, text })
     );
     session.on('sent', ({ to, text }) => this.emit('sent', { id, to, text }));
+    session.on('receipt', (r) => this.emit('receipt', { id, ...r }));
     session.on('disconnect', (info) => this.emit('disconnect', { id, ...info }));
     session.on('log', (entry) => this.emit('log', { id, ...entry }));
     session.on('error', (err) => this.emit('sessionError', { id, err }));

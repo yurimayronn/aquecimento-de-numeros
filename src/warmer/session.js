@@ -61,6 +61,7 @@ class Session extends EventEmitter {
     this._stopping = false;
     this._attempts = 0;
     this._reconnectTimer = null;
+    this._pending = new Map(); // msgId -> { toNumber, timer }
   }
 
   async start() {
@@ -106,6 +107,43 @@ class Session extends EventEmitter {
     sock.ev.on('creds.update', saveCreds);
     sock.ev.on('connection.update', (u) => this._onConnectionUpdate(u));
     sock.ev.on('messages.upsert', (m) => this._onMessages(m));
+    sock.ev.on('messages.update', (u) => this._onMessagesUpdate(u));
+  }
+
+  // Rastreia o status de entrega de uma mensagem enviada por este número.
+  // Se nenhum "entregue" chegar em 45s, marca como não entregue (bloqueio).
+  _trackSend(msgId, toNumber) {
+    const timer = setTimeout(() => {
+      if (this._pending.has(msgId)) {
+        this._pending.delete(msgId);
+        this.emit('receipt', { msgId, to: toNumber, status: 'undelivered' });
+      }
+    }, 45000);
+    this._pending.set(msgId, { toNumber, timer });
+  }
+
+  _onMessagesUpdate(updates) {
+    for (const u of updates) {
+      const msgId = u.key?.id;
+      if (!msgId || !this._pending.has(msgId)) continue;
+      const code = u.update?.status;
+      if (code == null) continue;
+      // WAMessageStatus: 0=erro 1=pendente 2=servidor 3=entregue 4=lido 5=ouvido
+      let status = null;
+      if (code >= 4) status = 'read';
+      else if (code === 3) status = 'delivered';
+      else if (code === 2) status = 'sent';
+      else if (code === 0) status = 'error';
+      if (!status) continue;
+
+      const pending = this._pending.get(msgId);
+      // status terminais: para de rastrear e limpa o timeout
+      if (status === 'delivered' || status === 'read' || status === 'error') {
+        clearTimeout(pending.timer);
+        this._pending.delete(msgId);
+      }
+      this.emit('receipt', { msgId, to: pending.toNumber, status });
+    }
   }
 
   _onConnectionUpdate(update) {
@@ -221,8 +259,11 @@ class Session extends EventEmitter {
     );
     await delay(typingMs);
     await this.sock.sendPresenceUpdate('paused', jid);
-    await this.sock.sendMessage(jid, { text });
-    this.emit('sent', { to: toNumber, text });
+    const sent = await this.sock.sendMessage(jid, { text });
+    const msgId = sent?.key?.id || null;
+    if (msgId) this._trackSend(msgId, toNumber);
+    this.emit('sent', { to: toNumber, text, msgId });
+    return msgId;
   }
 
   async stop() {
@@ -231,6 +272,8 @@ class Session extends EventEmitter {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
     }
+    for (const { timer } of this._pending.values()) clearTimeout(timer);
+    this._pending.clear();
     try {
       if (this.sock) {
         this.sock.ev.removeAllListeners();
