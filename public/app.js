@@ -37,8 +37,46 @@ function countdownText(nextFireAt) {
   return `em ${m}m ${String(s).padStart(2, '0')}s`;
 }
 
+// ---------- resumo geral (topo) ----------
+const summaryEl = document.getElementById('summary');
+
+function renderSummary() {
+  const all = [...sessions.values()];
+  const connected = all.filter((s) => s.status === 'connected');
+  const healthy = connected.filter((s) => s.healthy !== false);
+  const bad = connected.filter((s) => s.healthy === false);
+  const warming = connected.filter((s) => s.warmupDay && s.warmupDay < rampDays);
+  const mature = connected.filter((s) => s.warmupDay && s.warmupDay >= rampDays);
+  const offline = all.filter((s) => s.status !== 'connected');
+
+  const tiles = [
+    { label: 'Total', value: all.length, cls: '' },
+    { label: 'Saudáveis', value: healthy.length, cls: 't-green' },
+    { label: 'Com erro', value: bad.length, cls: 't-red' },
+    { label: 'Aquecendo', value: warming.length, cls: 't-orange' },
+    { label: 'Maduros', value: mature.length, cls: 't-blue' },
+    { label: 'Offline', value: offline.length, cls: 't-muted' },
+  ];
+
+  const warn =
+    engineRunning && healthy.length < 2
+      ? `<div class="summary-warn">⚠ Menos de 2 números saudáveis — o aquecimento está pausado (precisa de pelo menos 2).</div>`
+      : '';
+
+  summaryEl.innerHTML =
+    `<div class="tiles">` +
+    tiles
+      .map(
+        (t) =>
+          `<div class="tile ${t.cls}"><div class="tile-v">${t.value}</div><div class="tile-l">${t.label}</div></div>`
+      )
+      .join('') +
+    `</div>${warn}`;
+}
+
 // ---------- render ----------
 function renderSessions() {
+  renderSummary();
   if (sessions.size === 0) {
     sessionsEl.innerHTML =
       '<p class="empty">Nenhum número ainda. Adicione um acima e escaneie o QR code no WhatsApp &gt; Aparelhos conectados.</p>';
