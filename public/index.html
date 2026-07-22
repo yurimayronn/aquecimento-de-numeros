@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aquecedor de Números — WhatsApp</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>🔥 Aquecedor de Números</h1>
+    <div class="engine-controls">
+      <span id="engine-status" class="badge off">Motor: parado</span>
+      <button id="btn-start">Iniciar aquecimento</button>
+      <button id="btn-stop" class="secondary">Parar</button>
+      <button id="btn-logout" class="secondary">Sair</button>
+    </div>
+  </header>
+
+  <section class="settings">
+    <h2>Configurações do aquecimento</h2>
+    <form id="config-form">
+      <label>Intervalo mín (s)<input type="number" min="5" id="cfg-min" /></label>
+      <label>Intervalo máx (s)<input type="number" min="5" id="cfg-max" /></label>
+      <label>Trocas mín<input type="number" min="1" id="cfg-tmin" /></label>
+      <label>Trocas máx<input type="number" min="1" id="cfg-tmax" /></label>
+      <label>Limite/dia por nº<input type="number" min="1" id="cfg-cap" /></label>
+      <label>Hora início<input type="number" min="0" max="23" id="cfg-hstart" /></label>
+      <label>Hora fim<input type="number" min="1" max="24" id="cfg-hend" /></label>
+      <button type="submit">Salvar</button>
+    </form>
+    <p class="hint">O intervalo é por número: cada número inicia uma conversa a cada X segundos (sorteado entre mín e máx). Alterações valem na hora.</p>
+  </section>
+
+  <main>
+    <section class="panel">
+      <h2>Números</h2>
+      <form id="add-form">
+        <input id="add-id" placeholder="Apelido do número (ex: numero-01)" autocomplete="off" />
+        <button type="submit">Adicionar</button>
+      </form>
+      <div id="sessions" class="sessions"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Conversas ao vivo</h2>
+      <div id="activity" class="activity"></div>
+    </section>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

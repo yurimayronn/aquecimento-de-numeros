@@ -1,0 +1,257 @@
+const path = require('path');
+const EventEmitter = require('events');
+const { Boom } = require('@hapi/boom');
+const {
+  default: makeWASocket,
+  useMultiFileAuthState,
+  fetchLatestBaileysVersion,
+  jidNormalizedUser,
+  DisconnectReason,
+} = require('@whiskeysockets/baileys');
+const { baileysLogger } = require('../logger');
+
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Tradução dos códigos de desconexão do WhatsApp para algo legível.
+const REASONS = {
+  [DisconnectReason.loggedOut]: 'deslogado — credenciais inválidas (precisa reparear)',
+  [DisconnectReason.restartRequired]: 'reinício necessário (normal após parear)',
+  [DisconnectReason.connectionClosed]: 'conexão fechada pelo servidor',
+  [DisconnectReason.connectionLost]: 'conexão perdida (rede)',
+  [DisconnectReason.connectionReplaced]: 'conexão substituída — o mesmo número abriu outra sessão',
+  [DisconnectReason.timedOut]: 'tempo esgotado',
+  [DisconnectReason.badSession]: 'sessão corrompida (precisa reparear)',
+  [DisconnectReason.multideviceMismatch]: 'incompatibilidade multi-dispositivo (precisa reparear)',
+  [DisconnectReason.forbidden]: 'proibido — possível bloqueio/ban do número',
+  [DisconnectReason.unavailableService]: 'serviço do WhatsApp indisponível',
+};
+
+// Códigos em que NÃO adianta reconectar sozinho (exigem ação do usuário).
+const FATAL = new Set([
+  DisconnectReason.loggedOut,
+  DisconnectReason.badSession,
+  DisconnectReason.multideviceMismatch,
+  DisconnectReason.forbidden,
+  DisconnectReason.connectionReplaced,
+]);
+
+const MAX_RECONNECT_ATTEMPTS = 8;
+
+/**
+ * Uma conexão de WhatsApp (Baileys). Emite:
+ *   'qr'         (qrString)
+ *   'status'     (status)
+ *   'ready'      ()
+ *   'message'    ({ from, text })
+ *   'sent'       ({ to, text })
+ *   'disconnect' ({ code, reason, willReconnect, attempt, fatal })
+ *   'log'        ({ level, text })
+ */
+class Session extends EventEmitter {
+  constructor(id, authRoot, typingCfg) {
+    super();
+    this.id = id;
+    this.authDir = path.join(authRoot, id);
+    this.typingCfg = typingCfg;
+    this.status = 'disconnected';
+    this.qr = null;
+    this.number = null;
+    this.sock = null;
+    this.lastDisconnect = null; // { code, reason, at }
+    this._stopping = false;
+    this._attempts = 0;
+    this._reconnectTimer = null;
+  }
+
+  async start() {
+    this._stopping = false;
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+    // encerra socket anterior e seus listeners para não acumular
+    if (this.sock) {
+      try {
+        this.sock.ev.removeAllListeners();
+        this.sock.end(undefined);
+      } catch (_) {
+        /* noop */
+      }
+      this.sock = null;
+    }
+
+    this.status = 'connecting';
+    this.emit('status', this.status);
+
+    const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
+    const { version } = await fetchLatestBaileysVersion();
+
+    const sock = makeWASocket({
+      version,
+      auth: state,
+      logger: baileysLogger,
+      printQRInTerminal: false,
+      browser: ['Aquecedor', 'Chrome', '1.0.0'],
+      markOnlineOnConnect: false,
+      syncFullHistory: false,
+      // --- robustez de conexão (reduz os timeouts 408 em ambiente de datacenter) ---
+      connectTimeoutMs: 60_000,
+      keepAliveIntervalMs: 30_000, // ping periódico para manter a sessão viva
+      defaultQueryTimeoutMs: undefined, // não derruba por timeout nas init queries
+      retryRequestDelayMs: 500,
+      emitOwnEvents: false,
+    });
+    this.sock = sock;
+
+    sock.ev.on('creds.update', saveCreds);
+    sock.ev.on('connection.update', (u) => this._onConnectionUpdate(u));
+    sock.ev.on('messages.upsert', (m) => this._onMessages(m));
+  }
+
+  _onConnectionUpdate(update) {
+    const { connection, lastDisconnect, qr } = update;
+
+    if (qr) {
+      this.qr = qr;
+      this.status = 'qr';
+      this.emit('qr', qr);
+      this.emit('status', this.status);
+    }
+
+    if (connection === 'open') {
+      this.qr = null;
+      this.status = 'connected';
+      this._attempts = 0;
+      this.number = jidNormalizedUser(this.sock.user.id).split('@')[0];
+      this.emit('status', this.status);
+      this.emit('ready');
+      this.emit('log', { level: 'info', text: `[${this.id}] conectado (+${this.number})` });
+    }
+
+    if (connection === 'close') {
+      this._handleClose(lastDisconnect);
+    }
+  }
+
+  _handleClose(lastDisconnect) {
+    const err = lastDisconnect?.error;
+    const code =
+      err instanceof Boom ? err.output?.statusCode : err?.output?.statusCode;
+    const reason = REASONS[code] || err?.message || 'motivo desconhecido';
+    const fatal = code != null && FATAL.has(code);
+
+    this.lastDisconnect = { code: code ?? null, reason, at: Date.now() };
+
+    if (this._stopping) {
+      this.status = 'disconnected';
+      this.emit('status', this.status);
+      return;
+    }
+
+    const willReconnect = !fatal && this._attempts < MAX_RECONNECT_ATTEMPTS;
+
+    if (code === DisconnectReason.loggedOut) this.status = 'logged_out';
+    else if (fatal) this.status = 'error';
+    else this.status = willReconnect ? 'reconnecting' : 'disconnected';
+
+    this.emit('status', this.status);
+    this.emit('disconnect', {
+      code: code ?? null,
+      reason,
+      willReconnect,
+      attempt: this._attempts,
+      fatal,
+    });
+    this.emit('log', {
+      level: fatal ? 'error' : 'warn',
+      text: `[${this.id}] caiu — código ${code ?? '?'}: ${reason}${
+        willReconnect ? ` · reconectando (tentativa ${this._attempts + 1})` : ''
+      }`,
+    });
+
+    if (willReconnect) {
+      this._attempts += 1;
+      // backoff exponencial: 1s, 2s, 4s… até 30s
+      const wait = Math.min(30000, 1000 * 2 ** (this._attempts - 1));
+      this._reconnectTimer = setTimeout(() => {
+        this.start().catch((e) =>
+          this.emit('log', { level: 'error', text: `[${this.id}] falha ao reconectar: ${e.message}` })
+        );
+      }, wait);
+    }
+  }
+
+  _onMessages({ messages, type }) {
+    if (type !== 'notify') return;
+    for (const msg of messages) {
+      if (!msg.message || msg.key.fromMe) continue;
+      const remoteJid = msg.key.remoteJid || '';
+      if (!remoteJid.endsWith('@s.whatsapp.net')) continue;
+      const from = remoteJid.split('@')[0];
+      const text =
+        msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+      if (!text) continue;
+      this.emit('message', { from, text });
+    }
+  }
+
+  async sendHuman(toNumber, text) {
+    if (this.status !== 'connected' || !this.sock) {
+      throw new Error(`sessão ${this.id} não está conectada`);
+    }
+    const cfg = this.typingCfg;
+
+    // valida o número e usa o JID canônico devolvido pelo WhatsApp
+    // (JID incorreto é causa comum de falha de entrega / ack 463)
+    let jid = `${toNumber}@s.whatsapp.net`;
+    try {
+      const [info] = await this.sock.onWhatsApp(toNumber);
+      if (!info?.exists) {
+        throw new Error(`${toNumber} não tem WhatsApp`);
+      }
+      jid = info.jid;
+    } catch (e) {
+      this.emit('log', { level: 'warn', text: `[${this.id}] onWhatsApp falhou para ${toNumber}: ${e.message}` });
+    }
+
+    await this.sock.sendPresenceUpdate('composing', jid);
+    const typingMs = Math.min(
+      cfg.maxMs,
+      cfg.baseMs + text.length * cfg.perCharMs + Math.random() * cfg.readDelayMs
+    );
+    await delay(typingMs);
+    await this.sock.sendPresenceUpdate('paused', jid);
+    await this.sock.sendMessage(jid, { text });
+    this.emit('sent', { to: toNumber, text });
+  }
+
+  async stop() {
+    this._stopping = true;
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+    try {
+      if (this.sock) {
+        this.sock.ev.removeAllListeners();
+        this.sock.end(undefined);
+      }
+    } catch (_) {
+      /* noop */
+    }
+    this.sock = null;
+    this.status = 'disconnected';
+    this.emit('status', this.status);
+  }
+
+  toJSON() {
+    return {
+      id: this.id,
+      status: this.status,
+      number: this.number,
+      lastDisconnect: this.lastDisconnect,
+    };
+  }
+}
+
+module.exports = { Session };

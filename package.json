@@ -1,0 +1,22 @@
+{
+  "name": "aquecimento-de-numeros",
+  "version": "1.0.0",
+  "description": "Sistema de aquecimento de números de WhatsApp: números conectados via WhatsApp Web conversam entre si automaticamente.",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^6.7.9",
+    "express": "^4.21.2",
+    "pino": "^9.6.0",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.8.1"
+  }
+}
